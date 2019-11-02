@@ -1,0 +1,75 @@
+---
+title: "Pearson"
+author: "Gurina Alena"
+date: "01 11 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, echo=FALSE, eval=FALSE}
+require(dplyr)
+require(data.table)
+```
+
+
+
+### Коэффициент корреляции Пирсона
+
+СОбственно код функции
+```{r}
+my_cor_test<- function(x, y){
+    cov_coef = sum((x-mean(x))*(y-mean(y)))/(length(x)-1)
+    res_cor = cov_coef/((((sum((x-mean(x))^2))/((length(x)-1))*((sum((y-mean(y))^2)))/((length(y)-1))))^0.5)
+  return (res_cor)}
+```
+
+тестовый датафрейм
+
+```{r, cache=TRUE}
+x <- c(1,1,4,2,6,4,5)
+y <- c(1,3,3,7,5,5,2)
+df <- data.frame(x, y)
+```
+
+Результаты
+
+```{r}
+my_cor_test(df$x, df$y)
+test_res <- cor.test(df$x, df$y)
+test_res$estimate
+```
+
+
+Таким образом коэффициент корреляции Пирсона посчитанный базовой функцией и пользовательской функцией не отличается и равен `r my_cor_test(df$x, df$y)` 
+
+###  Ранговый Коэффициент корреляции Спирмана
+
+Я нашла довольно много вариантов поправок, на наличие повторяющихся значений в кластере и не поняла какая из них верная использовала <https://math.semestr.ru/corel/kspirmen.php>
+
+Собственно функция
+
+```{r}
+my_cor_spir <- function(df){
+  x = df[,1]# Читтаем значения из датафрейма
+  y = df[,2]
+  new_df = data.frame(x = factor(x), y = factor(y)) # Заводим новый чтобы не менять старый
+  n = nrow(new_df)
+  new_df$numb <- c(1:n) # нумеруемм колонки
+  new_df<- new_df %>% group_by(x) %>% mutate(rang_x = mean(numb)) # Ранги X
+  new_df<- new_df %>% group_by(y) %>% mutate(rang_y = mean(numb)) # Ранги Y
+  new_df<- new_df %>% mutate(diff = (rang_x-rang_y)^2) # Квадрат Разницы в рангах
+  popr_x <- (setDT(new_df)[, .(Count = .N) , by = rang_x])$Count # Число значений в каждом ранге X 
+  popr_y <- (setDT(new_df)[, .(Count = .N) , by = rang_y])$Count
+  d_x = (1/12)*(sum(popr_x^3 - popr_x)) # поправка на число значений в ранге X
+  d_y = (1/12)*(sum(popr_y^3 - popr_y))
+  coef_cor = 1 - ((sum(6*(new_df$diff))+d_x+d_y)/(n^3 - n)) # итоговая формула
+  return (coef_cor)
+}
+
+```
+
+Но её итоговое значение не совпадает с базовым коффициентом корреляции Спирмана, так что предполагаю, что она не верна. Но я задолбалась искать верную
+
+
