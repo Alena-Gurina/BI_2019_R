@@ -1,0 +1,290 @@
+---
+title: "Project_1"
+author: "Anonim"
+date: "29 10 2019"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_section: false
+    
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE)
+require(dplyr)
+require(readr)
+require(ggplot2)
+require(tidyverse)
+require(corrplot)
+require(knitr)
+options(digits = 2)
+theme_set(theme_bw())
+```
+```{r}
+# path_to_file - it`s folder where is Data.zip file
+# In this folder should not be any folder named Data
+path_to_file <- "C:/Statistiks-and-R-programming/Project_1" 
+```
+
+# Analys of shellfish characteristics
+
+## Data Read and Description
+Read all csv files from zip folder and make from them single dataframe
+```{r,echo=TRUE}
+read_file <- function(data_to_file){
+  unz_data <- paste(path_to_file, "Data.zip", sep = "/")
+  data_path <- paste(path_to_file, "Data", sep = "/")
+  unzip(unz_data, exdir = path_to_file)
+  data_list<- list.files(full.names = TRUE, path = data_path) %>%  lapply(read.csv, sep = ",",header = TRUE, fileEncoding = "UTF-8", stringsAsFactor = FALSE)
+  df_data <- do.call(rbind, data_list)
+  return(df_data)
+}
+df_mussel <- read_file(path_to_file)
+str(df_mussel)
+```
+Overall there are 4177 observation of shellfishs. For each was defined sex, and measured next metrics: number of rings, Length, Diameter, Height, Whole weight, Shucked weight, Viscera weight, Shell weight. Most of them have numeric type of data, but sex - is factor (where by numbers we coded male. female and juvenile individuales).  As we could see from structure of data, three metrics were read, as charecters and we should understand what wrong in our dataset.
+
+## Data pre-processing
+### Formating data to right type
+we can see that first 3 columns contain characters, thus 1 - integers, 2ns - factor and third  - double. let`s check what values are inhibit making right type of values
+
+```{r}
+df_mussel$Sex..1...male..2...female..3...uvenil.<- as.factor(df_mussel$Sex..1...male..2...female..3...uvenil.)
+levels(df_mussel$Sex..1...male..2...female..3...uvenil.)
+```
+
+In dataset instead of 1 was written 'male' and 'one' and instead of 3 - 'three'. It could be easy to correct. Also I change name of levels to 'male' , 'female and 'juvenile' respectively, because it`s easier to understand each observation.
+```{r}
+levels(df_mussel$Sex..1...male..2...female..3...uvenil.) <- c("male" , "female", "juvenile", "male", "male", "juvenile")
+colnames(df_mussel)[2] <- "Sex"
+```
+
+The same situation for Rings, instead 9 were written 'nine' So we can correct it
+
+```{r}
+df_mussel$Rings<- as.factor(df_mussel$Rings)
+a <- levels(df_mussel$Rings)
+a[length(a)] = 9
+levels(df_mussel$Rings) <- a
+df_mussel$Rings <- as.numeric(df_mussel$Rings)
+```
+
+Another situation for Length metric: instead numbers there are string: 'No data! I forgot to measure it! (' We just replace it to NA (if change type of data to numeric all strings become 'NA'). We have 6 observations with such values. 
+
+```{r}
+df_mussel$Length <- as.numeric(df_mussel$Length)
+```
+
+### NA check and replacement
+
+Checking the entire table showed the presence of `r sum(is.na(df_mussel)) ` __NA__ values, there are `r sum(apply(df_mussel, 1, FUN = function(x){sum(is.na(x))})>1) ` observation, where there are more than 1 __NA__
+
+  First of all metrics sex is factor, it have `r sum(is.na(df_mussel$Sex))` __NA__, and we should not replace na in factor variables because of great significants of mistakes. So we should drop it.
+  Other na I replace to mean. Also often use replacing NA to median and sometimes drop observations, where there are NA values. All methods has theirs advantages and disadvantages.
+
+```{r, echo=TRUE}
+df_mussel <- df_mussel %>% filter(Sex != 'na')
+df_mussel <- data.frame(sapply(df_mussel,function(x) ifelse(is.na(x),mean(x, na.rm = TRUE),x)))
+```
+
+
+```{r, echo=TRUE}
+df_mussel$Sex <- as.factor(df_mussel$Sex)
+levels(df_mussel$Sex) <- c('male', 'female', 'juvenile')
+```
+
+Now We have right data and could start analysis
+
+## Data analysis 
+
+```{r}
+plot(df_mussel)
+```
+
+First of all we can see that many factors are strongy correlated each other. 
+Second point 2 mussels are very different from others in height. They are much bigger than others.
+```{r, echo=FALSE}
+plot(df_mussel$Height)
+```
+
+As we can see values of Height less then 0.2-0.25, whereas 1 value over 0.5 and 2nd outlier is upper than 1. I guess that it`s mistake ar maybe another species, or maybe some random factor influenced on this individuals. In any case these observations unlikely to fit this research design. And Both observations will strongly affects any statistics of the shellfish samples. So I have drop them.
+```{r}
+df_mussel <- df_mussel %>%  filter(Height <=0.4)
+```
+
+```{r}
+kable(summary(select(df_mussel, -Sex)))
+```
+
+
+BY basis statistics of all variables we also can see that there are outliers for all weight metrics: max more that twice bigger then 3rd quantile. Different from Height outliers in this case outliers saved pattern of correlation, theirs just bigger, but do not stand out from others observations. Normally we should check: Why this individuals different from others so strong, but we have not such opotunity. First of if whole weight should be biggen then others.
+
+```{r}
+df_mussel <- df_mussel %>%  filter(Whole_weight > Shucked_weight & Whole_weight > Viscera_weight & Whole_weight > Shell_weight)
+```
+
+Our dataset was reduced. I guess there were mistakes of measuring or data entrying. Other outliers not so important, but for model creation we shoul remember about it.
+
+### General statistics and data distributions
+
+```{r}
+df_mussel %>% group_by(Sex) %>%  summarise(mean = mean(Length), sd = sd(Length))
+```
+
+As you can see, of male and female shellfishes are average longer, then juvenile.
+92% values of Length are less then `r min(df_mussel$Length[df_mussel$Length > quantile(df_mussel$Length, probs = 0.92)])`. Maximum value of these variable `r max(df_mussel$Length)`
+
+More than 70% (exactly `r round((nrow(filter(df_mussel, df_mussel$Height < 0.165)) / nrow(df_mussel))*100 , 3)`%) individuals have Height less then 0.165 (so you remeber, that we delete 2 observation with extremly high values of these metric)
+
+Z-standartisation is one of the most used method of data standartisation
+
+```{r}
+df_mussel <- df_mussel %>% mutate(Length_z_score = ((Length - mean(Length))/sd(Length)))
+```
+
+#### Comparison of shellfish with different number of rings (5 and 15)
+
+First of all We can see boxplot, because, if we do not have any differents, it`s unlikely, that any analyses show it with normal significans.
+
+```{r}
+mussel_rings <- df_mussel %>%  filter(Rings == 5 | Rings == 15)
+mussel_rings$Rings <- as.factor(mussel_rings$Rings)
+ggplot(mussel_rings, aes(x = Rings, y = Diameter))+
+  geom_boxplot()+
+  labs (title = "Comparison of the diameter of shellfishes with different numbers of rings")
+```
+
+And we can see that there are not differents, we can check it by t.test (p-value `r t.test(mussel_rings$Diameter[mussel_rings$Rings == 5], mussel_rings$Diameter[mussel_rings$Rings == 15])$p.value `). And Its result - null hypothesis is True. We have more then 50% probabilities getting the same or even stronger differences.
+
+### Relationship between Whole weight and diameter metrics.
+
+First of all let`s see it`s on graph.
+
+```{r}
+ggplot(df_mussel, aes(x = Diameter, y = Whole_weight))+
+  geom_point(aes(color = I("dark green")))+
+  labs(title = "Relationship of Diameter and Whole Weight of shellfish")
+```
+
+We can assume positive correlation of 2 factors, but as we can see, but relation are not linear. But we can check correlation force by Pearson test. As we can see these metrics have strong correlation `r cor.test(df_mussel$Diameter, df_mussel$Whole_weight)$estimate`
+
+```{r}
+cor.test(df_mussel$Diameter, df_mussel$Whole_weight)
+```
+
+## Correlation and linear regression models.
+
+First of all lets do corrlation matrix to understand, that variables are related to each other.
+
+```{r}
+df_mussel_for_cor <- df_mussel %>% select(-Sex) %>%  select (-Length_z_score)
+cor_data <- cor(df_mussel_for_cor)
+corrplot(cor_data)
+```
+
+We can see, that metric Rings has weak negative correlation and although that correlation of Height metrics with other metrics is slightly weaker then for other pairs of metrics.
+
+Based on this we try to create linear regression model. I guess that the most interesting parameter to predict is __Viscera__ __weight___. Because this metrics harder to measure. And it also could be useful to predict weight of shellfish without shell.
+
+First of all make full linear model (Which can contain all predictors we interested). I don`t want to take Shell weight and Shucked weight as predictor, because I want to predict Weight of Viscera without  shellfish destruction
+
+```{r}
+full_mod_muss <- lm(Viscera_weight~ Rings + Sex + Length + Diameter + Height + Whole_weight, data = df_mussel)
+summary(full_mod_muss)
+```
+
+Good! We have high adjusted R-squared (`r round(summary(full_mod_muss)$adj.r.squared)`), BUt we can see that parameters Height is unuseful (as we predict by correlation matrix). Also I drop metrics Rings and Sex and try to understand Is new model is worse then these.
+
+```{r}
+mod_muss <- lm(Viscera_weight~ Length + Diameter + Whole_weight, data = df_mussel)
+summary(mod_muss)
+```
+
+Adjusted R-squared decreased by less than 0.01. I want to check all three simple linear model (with only 1 predictor) and check on other characteristics (thus residuals distribution) best of it.
+
+```{r}
+lm_weight <- lm(Viscera_weight~ Whole_weight, data = df_mussel)
+lm_length <- lm(Viscera_weight~ Length , data = df_mussel)
+lm_diameter <- lm(Viscera_weight~ Diameter, data = df_mussel)
+mod_comparison <-  data.frame(Weight_lm = summary(lm_weight)$adj.r.squared, Length_lm = summary(lm_length)$adj.r.square, Diameter_lm = summary(lm_diameter)$adj.r.square)
+mod_comparison
+```
+
+### Checking model with whole weight as predictor
+Okey, the highest adjuster R-squared is in model with weight predictor.
+Lets check it on residuals distributions.
+
+```{r}
+mod_diag <- fortify(lm_weight)
+ggplot(mod_diag, aes(x = 1:nrow(mod_diag), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 1, color = "red") +
+  labs(title = "Cook`s distanse for residuals of LM")
+```
+
+As you can see Cook`s distance for this model are very small, It is really hard to see them on graph.
+
+```{r}
+ggplot(data = mod_diag, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0)+
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")+
+  labs(title = "Residuals distribution of LM")
+```
+
+We have a great problem: residuals dispersion is not not homogeneous throughout the scope of the model. So despite great level of adjusted R-squared, this linear model is not fit. Problem could be in non linear relation of metrics.
+
+### Checking model with Length as predictor
+
+Let-s check another model: __lm_length__. It might be even more interesting then model with whole weight as predictor.
+
+```{r}
+mod_diag2 <- fortify(lm_length)
+ggplot(mod_diag2, aes(x = 1:nrow(mod_diag2), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 1, color = "red") +
+  labs(title = "Cook`s distanse for residuals of LM")
+```
+
+For this moddel Cook`s distance also very small
+
+```{r}
+ggplot(data = mod_diag2, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0)+
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")+
+  labs(title = "Residuals distribution of LM")
+```
+
+There we have __two__ problems at once. Dispersion is not homogeneous, as in previous model, and also there is pattern of non-linear residuals.
+
+### Checking model with Diameter as predictor
+
+Let`s check last predictor.
+
+```{r}
+mod_diag3 <- fortify(lm_diameter)
+ggplot(mod_diag3, aes(x = 1:nrow(mod_diag3), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 1, color = "red") +
+  labs(title = "Cook`s distanse for residuals of LM")
+```
+
+Cooks`s distance also small
+
+```{r}
+ggplot(data = mod_diag3, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0)+
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")+
+  labs(title = "Residuals distribution of LM")
+```
+
+And here we have the same problems. 
+
+So we can summarise that we can`t create a simple linear models for all dataset, maybe we should do it for different levels of factor(Sex) separatly. (full model I also check - the same situation). Or maybe we can predict Visceral weight only on a small range of value.
+
