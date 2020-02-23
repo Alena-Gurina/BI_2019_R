@@ -1,0 +1,287 @@
+---
+title: "Project_3"
+author: "Somebody"
+date: "Once upon a time"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_section: false
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE)
+require(readxl) #readxl version 1.3.1 
+require(tidyverse) #tidyverse version 1.3.0
+require(knitr) #knitr version 1.28
+require(ggplot2) #ggplot2 version 3.2.1
+require(FSA) #FSA version 0.8.27
+require(data.table) #data.table version 1.12.8 
+require(zoo) #zoo version 1.8-7
+require(car) #car version 3.0.6
+require(gridExtra) #gridExtra version 2.3
+require(gvlma) #gvlma version 1.0.0.3
+require(vegan) #vegan version 2.5-6 
+require(pca3d) #pca3d version 0.10.1
+require(limma) #limma version 3.42.2
+require(dplyr) #dplyr version 0.8.4
+require(tidyr) #tidyr version 1.0.2 
+options(digits = 2)
+theme_set(theme_bw())
+```
+
+### Data Description
+
+Data are taken from https://archive.ics.uci.edu/ml/datasets/Mice+Protein+Expression#
+```{r}
+#Please, Enter path to the file with data below
+path = "~/Documents/Statistiks-and-R-programming/Project_3/Data_Cortex_Nuclear.xls"
+```
+
+```{r}
+cortex_data <- readxl::read_excel(path)
+```
+
+We have data with `r nrow(cortex_data)` observations  and `r ncol(cortex_data)` data about each, includes mouse ID,  and metadata about mices Genotype, Treatment group, theirs Behavior and Class. But most of observation are different protein count data. Dbt as we could read from data set description, there are only 72 mices, so from each mouse authors get 15 observations (tissues). Authors purpose that such observations are independent, but it controversial issue. There are 38 control mice and 34 trisomic mice (Down syndrome), totally there are 8 classes of mices (description in table)
+
+```{r}
+class_name <- c("c-CS-s", "c-CS-m", "c-SC-s", "c-SC-m", "t-CS-s", "t-CS-m", "t-SC-s", "t-SC-m")
+group <- c(rep("control", 4), rep("trisomy", 4))
+learn <- c(rep(rep(c("stimulated", "not stimulated"), each = 2), 2))
+injected <- rep(c("saline", "memantine"), 4)
+number_of_mice <- c(9, 10, 9, 10, 7, 9, 9, 9)
+classes_description <- data.frame(class_name = class_name, group = group, learn = learn, injected = injected, number_of_mice = number_of_mice)
+kable(classes_description)
+```
+
+As we can see that samples are not balanced. most of classes have 9 mice, but there are 2 classes with 10 mice and 1 class (***t-CS-s***) with only 7 mice
+
+### working with missing data (NA)
+
+First of all It is necessary to check data for missing values (NA). Overall there are `r sum(is.na(cortex_data))` missing values
+```{r}
+cortex_data$mouse_number <- rep(1:72, each = 15)
+num_na <- is.na(cortex_data)
+num_na_3 <- apply(num_na, 1, sum)
+```
+
+Fortunatly, all factor and character variables have not got na values, so only some protein counts are missed. But there are `r sum(num_na_3 > 0)` observation with __NA__ , It`s close to half of our observation, so we could not just abort them.
+
+```{r}
+
+a <- as.data.frame(tapply(num_na_3, INDEX = cortex_data$mouse_number, sum))
+a$mouse_number <- 1:72
+c <- a %>%  dplyr::filter(tapply(num_na_3, INDEX = cortex_data$mouse_number, sum) > 0)
+colnames(c) <- c("NA_number", "mouse_number")
+b <- as.data.frame(tapply(num_na_3, INDEX = cortex_data$class, sum))
+colnames(b) <- "NA_number"
+kable(b)
+```
+
+We can see that in each class there are __NA__. `r nrow(c) ` mice have __NA__ values, maximum NA for mouse = `r max(c$NA_number)`
+As about protein counts there are several proteins with high percentage of __NA__ values, for them we could not replace them with out great reducing of variety, so we just cast them
+
+```{r}
+num_na_2 <- data.frame(apply(num_na, 2, sum))
+colnames(num_na_2) <- "NA_number"
+num_na_2$names <- colnames(cortex_data)
+num_na_4 <- num_na_2 %>% dplyr::filter(num_na_2$NA_number > 20)
+kable(num_na_4)
+cortex_data_NA_cast <- cortex_data %>% select(-BAD_N, -BCL2_N, -pCFOS_N, -H3AcK18_N, -EGR1_N, -H3MeK4_N)
+```
+
+After threw out proteins with high percentage of __NA values__ In ur data set there are `r sum(is.na(cortex_data_NA_cast))` And most of them we can replace to mean or median values, but there are observations with high level of NA, 43 observations have NA values, as we can not be sure of these observations (in data set description there is no explanations of these na values) And all these samples were taken from the same mouse. So we should understand, should we cast only 3 samples or all samples from these mouse. Check of anova in group to find significant influence which these mouse makes in data, but really strong difference was not discovered, so we can jusr throw out only 3 samples. As our data was unbalanced, removing 3 observation does not strong influence to situation. We also remove other samples contain NA
+
+```{r}
+num_na2 <- is.na(cortex_data_NA_cast)
+num_na2_2 <- data.frame(apply(num_na2, 1, sum))
+colnames(num_na2_2) <- "NA_number"
+num_na2_2$obs_numb <- cortex_data_NA_cast$MouseID
+kable(dplyr::filter(num_na2_2, num_na2_2$NA_number>10))
+
+t_SC_s <- cortex_data_NA_cast %>% dplyr::filter(class == "t-SC-s")
+t_SC_s <- t_SC_s %>%  select(-MouseID, -Genotype, -Treatment, -Behavior, -class)
+fit_na_q <- lm(mouse_number~. , data = t_SC_s)
+full_res <- anova(fit_na_q)
+t_SC_s2 <- t_SC_s %>%  dplyr::filter(mouse_number != 66)
+fit_2_na_q <- lm(mouse_number~. , data = t_SC_s2)
+cut_res <- anova(fit_2_na_q)
+
+cor_dat <- cortex_data_NA_cast %>% dplyr::filter(MouseID != c("3426_13", "3426_24", "3426_15"))
+cor_dat <- drop_na(cor_dat)
+```
+
+
+### Analis of BDNF_N protein
+
+As we can see on graph, in groups distribution of these protein is far enouth from Laplace–Gauss distribution, so application of 
+analysis of variance would not be correct. Also 
+
+```{r}
+ggplot(cor_dat, aes(x = BDNF_N, fill = class)) + 
+  geom_density() +
+  facet_grid(class~.)+
+  theme_bw()
+
+bartlett.test(BDNF_N ~ class, data = cor_dat)
+```
+
+We decided to apply Kruskal-Wallis test.
+
+```{r}
+kruskal.test(BDNF_N ~class, data = cor_dat)
+```
+
+As we can see kruskal-wallis test  show that there is a difference between groups for BDNF_N protein counts.
+say that 
+But based on graph we can not understand what groups differ each other
+
+```{r}
+ggplot(data = cor_dat, aes(x= class, y = BDNF_N, fill = class)) +
+  geom_boxplot(width = I(0.5))+
+  theme_bw()
+```
+
+Below table contain only pairs with significant (by DUNN test with Holm-Bonferroni correction). We can see that classes pairs differ each other. we can understand that most difference we find in control groups, between different variant of control and between control and trisomic mice.
+
+```{r}
+PT <- dunnTest(BDNF_N ~ as.factor(class), data = cor_dat, method = "bh")
+dunnt_res <- PT$res
+dunnt_res<- dunnt_res %>% dplyr::filter(P.adj < 0.05)
+kable(dunnt_res[order(dunnt_res$Comparison),])
+```
+
+### Linear model for ERBB4_N protein
+
+```{r}
+cortex_data_NA_cast_only_protein <- cor_dat%>% select(-MouseID, -Genotype, -class, -Treatment, -Behavior, -mouse_number)
+fit1 <- lm(ERBB4_N ~. , data = cortex_data_NA_cast_only_protein)
+fit2 <- update(fit1, .~.-pS6_N)
+a <- summary(fit2)
+summary(gvlma(fit2))
+```
+
+As we can see, model well described our data, but it does not satisfied all global check
+
+```{r}
+b <- data.frame(c(0, vif(fit2)))
+c <- data.frame(a$coefficients)
+pr_n <- row.names(c)
+d <- cbind(pr_n, c, b)
+colnames(d) <- c("Pr_n", "Estimate", "Std_Err", "t_val", "Pr", "vif") 
+d <- d %>% filter(vif > 2,  Pr > 0.05)
+kable(d)
+```
+
+And also there are many variables with great variance inflation factor (VIF)
+
+```{r, echo=FALSE, include = FALSE}
+mod_null <- lm(ERBB4_N ~ 1, data = cortex_data_NA_cast_only_protein)
+mod_fin <- step(fit2, direction = "backward")
+```
+
+We check model by droping one predictor, and as a result we get such model
+
+```{r}
+summary(gvlma(mod_fin))
+```
+
+```{r}
+mod_diag <- fortify(mod_fin)
+mod_cook <- ggplot(mod_diag, aes(x = 1:nrow(mod_diag), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red")
+gg_resid <- ggplot(data = mod_diag, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0)+
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+grid.arrange(mod_cook, gg_resid, nrow = 1)
+
+qqPlot(mod_diag$.stdresid)
+```
+
+But we have problem with residuals, and also global chack were failed!
+So despite our model good predict ERBB4_N by other protein, we can not name it correct
+
+### Principal component analyses
+
+```{r}
+protein_pca <- rda(cortex_data_NA_cast_only_protein, scale = TRUE)
+head(summary(protein_pca))
+```
+
+```{r}
+biplot(protein_pca)
+eigenvals(protein_pca)
+bstick(protein_pca)
+
+screeplot(protein_pca, type = "lines", bstick = TRUE)
+```
+
+```{r}
+pca_summary <- summary(protein_pca)
+pca_result <- as.data.frame(pca_summary$cont)
+```
+
+We can see that in good situation we should use 6 or 7 components
+
+```{r}
+df_scores <- data.frame(cor_dat,
+                        scores(protein_pca, display = "sites", choices = c(1, 2, 3), scaling = "sites"))
+
+p_scores <- ggplot(df_scores, aes(x = PC1, y = PC2)) + 
+  geom_point(aes( color = class), alpha = 0.5) +
+  coord_equal(xlim = c(-1.2, 1.2), ylim = c(-1.2, 1.2)) + ggtitle(label = "Ординация в осях главных компонент") + theme_bw()
+p_scores
+```
+
+You can see 3d graph (with first 3 component) in RMarkdown, by starting code in chunk below
+
+```{r}
+protein_pca_base<- prcomp(cortex_data_NA_cast_only_protein, scale = TRUE)
+gr <- factor(cor_dat$class)
+pca3d(protein_pca_base, group = gr, legend = "right")
+
+```
+
+
+### nMDS
+
+```{r}
+cortex_data_NA_cast_only_protein$class <- cor_dat$class
+ord<-metaMDS(comm = cortex_data_NA_cast_only_protein[, -72], distance = "kulczynski",autotransform = F)
+ord_pt <- data.frame(cortex_data_NA_cast_only_protein[, 72], scores(ord, display = "sites"))
+ggplot(ord_pt, aes(NMDS1, NMDS2, color = class))+geom_point()+ggtitle(label = "Ординация nMDS")
+```
+
+Overall we can see that there are differents in proteins counts in classes. But stress level is high enoth.
+
+### Search for differentially expressed proteins by limma
+
+We can see all proteins that differentially expressed in classes
+```{r}
+cortex_data_NA_cast_only_protein <- cortex_data_NA_cast_only_protein %>% select(-class, -pS6_N)
+meta <- cor_dat %>% select(MouseID, mouse_number, class)
+
+biolrep <- factor(meta$mouse_number)
+corfit <- duplicateCorrelation(as.matrix(cortex_data_NA_cast_only_protein), block = biolrep)
+expr_matrix <- t(as.matrix(cortex_data_NA_cast_only_protein))
+X <- model.matrix(~ class, data = meta)
+fit <- lmFit(expr_matrix, design = X, block = biolrep, cor = corfit$consensus, method = "robust", maxit = 10000)
+efit <- eBayes(fit)
+a <- topTable(efit, coef = 2, number = ncol(cortex_data_NA_cast_only_protein), adjust = "BH")
+a$protein <- colnames(cortex_data_NA_cast_only_protein)
+a <- a %>%  filter(adj.P.Val < 0.05)
+kable(a)
+```
+
+Futher by changing group we could understand what factor influenced for each protein (we should get Treatment or Genotype instead class)
+
+
+### THE END
+
+
+
